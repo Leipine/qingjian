@@ -362,3 +362,12 @@ Unix socket 用共享长度前缀与 Frame（当前公共版本 8，与 `PROTOCO
 - `provider` 支持 cloud / offline，`selection_provider` 支持 inherit / cloud / disabled；显式选择 cloud 才允许离线短句模式使用在线长文。选区翻译请求／译文不写调试日志；不记录接口错误正文。默认关闭整句翻译，不包含任何 API Key。
 - 后台工人收到更新的请求时取消旧任务，序号仍由 Core 校验。取消界面并不保证服务商已停止计费。
 - 本地兼容接口测试覆盖段落间空白、上下文与术语传递、后段失败重试、截断拒绝和长度限制，测试不访问外部接口或用户配置。
+
+
+## Windows 长文翻译接入
+
+TSF 选区上限提升到 20,000 个 Unicode 字符，UTF-16 缓冲容纳 40,001 个单元，拒绝超长或不完整代理对。请求时保存范围及原文；回填前在同一编辑会话内核对当前范围起止和原文，变动时拒绝覆盖。焦点丢失、结束评审时清除锚点。
+
+`translate_selection_en` / `translate_selection_ja` 注册独立保留键，默认 Ctrl+Alt+Shift+E / J，原有方向自动判断快捷键保留。Server 只调用 Core 的 `request_translation_to`，不执行翻译算法。等待确认键不结束评审，错误保留原文；180 字仅裁剪预览，不裁剪提交文本。WinUI 云服务页提供 `sentence_translation` 原生开关。
+
+此 PR 依赖独立 Core / Predict 翻译基础，不包含守护、游戏候选窗或安装器改动。独立 Router 验证工具只读现有配置、隔离缓存，输出布尔结果／计数，不输出密钥、选区或译文。
