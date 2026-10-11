@@ -127,6 +127,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
+      - name: Build and test optional Windows watchdog
+        run: |
+          cmake -S apps/windows/watchdog -B target/windows-watchdog -A x64 -DBUILD_TESTING=ON
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build target/windows-watchdog --config Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ctest --test-dir target/windows-watchdog -C Release --output-on-failure
+
       - name: Clippy (Server, TSF DLL, Settings)
         run: cargo clippy -p qingjian-windows-server -p qingjian-windows-tsf -p qingjian-windows-settings --all-targets --locked -- -D warnings
 

@@ -72,6 +72,8 @@ FinishedLabel=安装完成。请注销后重新登录（或重启电脑），青
 Source: "{#Repo}\target\release\qingjian_tsf.dll";      DestDir: "{app}"; DestName: "{#TsfDll}"; Flags: ignoreversion uninsrestartdelete
 Source: "{#Repo}\target\i686-pc-windows-msvc\release\qingjian_tsf.dll"; DestDir: "{app}"; DestName: "{#TsfDll32}"; Flags: ignoreversion uninsrestartdelete
 Source: "{#Repo}\target\release\qingjian-settings.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#Repo}\target\release\qingjian-watchdog.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#Repo}\apps\windows\watchdog\watchdog-task.ps1"; DestDir: "{app}"; Flags: ignoreversion
 ; 设置程序自带一份 Windows App Runtime（自包含部署：Windows 10 上机器装的框架包用不了，见 docs\notes\windows-win10.md）；
 ; 文件由 build.ps1 按 settings-runtime.txt 从 target\release 挑进 target\installer\settings-runtime，必须与 exe 同级。
 Source: "{#Repo}\target\installer\settings-runtime\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -109,6 +111,9 @@ Source: "{#Repo}\target\release\qingjian-server.exe";   DestDir: "{app}"; Flags:
 [Icons]
 Name: "{group}\青简设置"; Filename: "{app}\qingjian-settings.exe"; IconFilename: "{app}\qingjian.ico"
 Name: "{group}\卸载青简"; Filename: "{uninstallexe}"
+; 守护可选，当前登录用户显式开启；保留原 Server 登录快捷方式。
+Name: "{group}\开启后台守护"; Filename: "{app}\qingjian-watchdog.exe"; Parameters: "--resume"; IconFilename: "{app}\qingjian.ico"
+Name: "{group}\暂停后台守护"; Filename: "{app}\qingjian-watchdog.exe"; Parameters: "--pause"; IconFilename: "{app}\qingjian.ico"
 ; 登录自启：登录时 Explorer 走 ShellExecute 拉起本快捷方式 → AppInfo 授予 uiAccess，候选窗才能盖过商店 / 任务栏搜索。
 ; 用 {commonstartup}（所有用户「启动」文件夹）而非 {userstartup}：本安装器是 admin 机器级安装，
 ; admin 模式下写每用户区会落到「谁提权就写谁」的 profile（Inno 会告警且可能不是目标用户）；
@@ -131,6 +136,8 @@ Filename: "{syswow64}\regsvr32.exe"; Parameters: "/s ""{app}\{#TsfDll32}"""; \
 ;    CreateProcess / runasoriginaluser 拉起（报 740），必须走 ShellExecute（等同双击）。
 
 [UninstallRun]
+; 仅删除源标记、SID、动作路径都属于本安装的守护任务。
+Filename: "{app}\qingjian-watchdog.exe"; Parameters: "--remove-task"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveWatchdogTasks"
 ; 反向：先删登录任务、杀 Server / 设置程序、反注册 DLL，Inno 再删文件（DLL 若仍被占用，重启后删）。
 Filename: "{sys}\schtasks.exe"; Parameters: "/delete /tn ""Qingjian Server"" /f"; \
   Flags: runhidden; RunOnceId: "DelLogonTask"
@@ -154,6 +161,7 @@ Type: files; Name: "{app}\data\model\vocab.json"
 Type: filesandordirs; Name: "{app}\codes"
 
 [UninstallDelete]
+Type: files; Name: "{app}\watchdog-maintenance.json*"
 ; 历次升级留下的旧版本 DLL（正常在升级时就删了；仍被占用的会留到这里）。
 Type: files; Name: "{app}\qingjian_tsf-*.dll"
 Type: files; Name: "{app}\qingjian-server.old-*.exe"
@@ -218,8 +226,24 @@ end;
 
 { 覆盖前先结束 Server 与设置程序（只有这两个 exe 要覆盖；DLL 按版本并排装，不用关应用）。
   没在跑时 taskkill 返回非 0，忽略。 }
+{ 维护只更新本安装拥有的任务，保存各用户的暂停状态。首次安装没有守护时直接通过。 }
+function WatchdogMaintenance(const Action: String): Boolean;
+var
+  Path: String;
+  Code: Integer;
+begin
+  Path := ExpandConstant('{app}\qingjian-watchdog.exe');
+  Result := True;
+  if FileExists(Path) then
+    Result := Exec(Path, Action, ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0);
+end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
+  if not WatchdogMaintenance('--maintenance-stop') then
+  begin
+    Result := '后台守护维护失败，请暂停守护后重试。';
+    Exit;
+  end;
   RetireServerExe;
   KillProcess('qingjian-server.exe');
   KillProcess('qingjian-settings.exe');
@@ -292,14 +316,18 @@ begin
     DeleteLegacyLogonTask;
     DeleteStaleDlls;
     DeleteRetiredServers;
+    if not WatchdogMaintenance('--maintenance-resume') then Log('恢复守护任务状态失败');
   end;
 end;
 
-{ 卸载同理：[UninstallRun] 杀 Server 之前先改名，旧版 DLL 拉不起它，文件才删得掉。 }
+{ 卸载同理：杀 Server 之前先改名，旧版 DLL 拉不起它，文件才删得掉。 }
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then
+  begin
+    if not WatchdogMaintenance('--maintenance-stop') then Log('暂停守护失败');
     RetireServerExe;
+  end;
 end;
 
 { 装完在完成页点 Finish 后立即起一次 Server。
@@ -314,4 +342,11 @@ begin
     ShellExecAsOriginalUser(
       '', ExpandConstant('{app}\qingjian-server.exe'), '', '',
       SW_SHOWNORMAL, ewNoWait, ErrorCode);
+end;
+
+{ 安装取消或失败时也恢复维护前的任务启用状态。 }
+procedure DeinitializeSetup;
+begin
+  if FileExists(ExpandConstant('{app}\watchdog-maintenance.json')) then
+    if not WatchdogMaintenance('--maintenance-resume') then Log('恢复守护维护状态失败');
 end;

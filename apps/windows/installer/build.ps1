@@ -39,6 +39,12 @@ if (-not $SkipBuild) {
     Write-Host '构建 release 产物…' -ForegroundColor Cyan
     Push-Location $Repo
     try {
+        cmake -S apps/windows/watchdog -B target/windows-watchdog -A x64 -DBUILD_TESTING=OFF
+        if ($LASTEXITCODE -ne 0) { throw '守护 CMake 配置失败' }
+        cmake --build target/windows-watchdog --config Release
+        if ($LASTEXITCODE -ne 0) { throw '守护编译失败' }
+        New-Item -ItemType Directory -Path target/release -Force | Out-Null
+        Copy-Item -LiteralPath target/windows-watchdog/Release/qingjian-watchdog.exe -Destination target/release/qingjian-watchdog.exe -Force
         cargo build --release --locked -p qingjian-windows-server -p qingjian-windows-tsf -p qingjian-windows-settings
         if ($LASTEXITCODE -ne 0) { throw "cargo build 失败（退出码 $LASTEXITCODE）" }
         cargo build --release --locked -p qingjian-windows-tsf --target i686-pc-windows-msvc
@@ -51,7 +57,8 @@ $targets = @(
     'release\qingjian_tsf.dll',
     'i686-pc-windows-msvc\release\qingjian_tsf.dll',
     'release\qingjian-server.exe',
-    'release\qingjian-settings.exe'
+    'release\qingjian-settings.exe',
+    'release\qingjian-watchdog.exe'
 )
 foreach ($t in $targets) {
     $p = Join-Path $Repo "target\$t"

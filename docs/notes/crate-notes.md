@@ -173,7 +173,6 @@ P2C 自由生成实验：`--eval-text <集> --eval-generate data/models/hanzhang
 同一天又拆成两条轴（单选的 `scheme` 表达不了混输）。旧键（`shuangpin` / `zhuyin` / `scheme = "wubi86"`）
 都还在读、文件不自动改写。
 
-
 `Config`（TOML 配置文件，`[general]` / `[shortcut]` / `[fuzzy]` / `[dictionaries]` / `[apps]` / `[predict]` 分节，首次运行写模板，
 `set_value` 用 toml_edit 原地改键保留注释；`[model] enabled` 本地整句模型开关，`LocalModelConfig`；
 中英模式两项：`[shortcut] switch_mode`（`SwitchKeys`：勾选 shift / control / ctrl+alt+space，可多选，老配置的单个字符串照读）与 `[general] english_mode`（内置英文模式总开关））；
@@ -298,6 +297,42 @@ Server 每次轮询比对用户 `dicts` 的路径 / mtime / 长度快照，配�
 所以由 **Server 读配置、经协议下发**（`InputSettings`：`OpenSession` 回包带一次，之后每拍 `SyncMode` 跟着走），
 DLL 不读文件、不查 mtime。`SessionOpened` 只回过协议版本对得上的 DLL——老的 `open` 是只写不读，
 多回一条会被它当成下一次 `Poll` 的应答而报错，那条连接就废了；老 DLL 从 `ModeSync` 那一拍也能拿到同一份（新字段直接忽略）。
+
+### Windows 可选后台守护
+
+`apps/windows/watchdog` 是独立 Win32 C++20 程序 `qingjian-watchdog.exe`，不链接 Engine、渲染器或翻译运行时。
+安装器附带二进制与 `watchdog-task.ps1`，开始菜单显式开启 / 暂停；不改现有 Server 登录快捷方式或 TSF 的按键重连逻辑。
+仅 Windows 实现，macOS / Linux 不变。
+
+守护拒绝服务账户、会话 0 和非交互桌面；监看对象须同时匹配用户 SID、会话与完整镜像路径。
+64 / 32 位 HKCR 的青简 CLSID 注册均须指向本目录内已存在的版本化 TSF DLL，注册变化即退出。
+恢复通过 `ShellExecuteExW`，保持签名 Server 的 uiAccess 启动路径；与 TSF 共用 `Local\QingjianServerLaunch` 启动锁。
+进程退出（含零退出）按 1 / 2 / 4 / 8 / 16 / 30 秒退避，运行稳定三十秒后重置；无进程时发现同会话同名异目录程序则拒绝恢复，不结束对方。
+单实例与停止事件为当前 SID + 会话隔离；显式暂停记录位于 `%LOCALAPPDATA%\Qingjian\watchdog-paused.flag`，同时校验 SID 与安装目录。
+事件日志为同目录 `logs\server-watchdog.log`，超过 1 MiB 保留一份 `.1`；不记录输入内容、配置或密钥。
+
+任务 `QingjianWatchdog-<SID>` 仅使用当前用户的 InteractiveToken 与普通权限，登录后五秒启动，另有每分钟一次的补偿触发；
+无运行时长上限，同任务忽略重复启动。任务只启动守护，守护再经 ShellExecute 拉起 Server。
+暂停先写标记、禁用任务并发停止事件，保留已有 Server；再次开启才清除匹配的暂停标记并更新任务定义。
+管理脚本校验任务的 Source、SID、RunLevel、动作路径、工作目录及空参数，拒绝覆盖外部同名任务。
+安装器以 `Global\QingjianInstaller` 互斥体挡住维护期间的恢复；覆盖前保存本目录全部守护任务的启用状态并停止，
+成功、取消或失败后恢复原状态；重复进入维护不覆盖首次记录。卸载仅删除校验属于本目录的任务。
+维护记录为安装根目录 `watchdog-maintenance.json`；正常恢复后删除，未写入完成前不停止任务。
+
+构建依赖 CMake 3.20+ 与 MSVC C++ 工具链，静态 CRT；`installer/build.ps1` 自动构建、打包，并在 `-Sign` 时一起签名。
+本地可独立构建并运行隔离测试：
+
+```powershell
+cmake -S apps/windows/watchdog -B target/windows-watchdog -A x64 -DBUILD_TESTING=ON
+cmake --build target/windows-watchdog --config Release
+ctest --test-dir target/windows-watchdog -C Release --output-on-failure
+```
+
+无 MSVC 时 `Build-Watchdog.ps1 -Compiler <llvm-mingw 的 clang++> -OutputDir <目录> -WithTests` 可编译同一源码；
+再以 Windows PowerShell 5.1 顺序运行 `tests/Test-Watchdog.ps1` 与 `tests/Test-Task.ps1`，均传 `-BinDir`、`-WorkDir`。
+测试宏改用隔离目录的注册标记、假服务、暂停标记及独立停止事件；任务测试使用随机 `QingjianWatchdog-Test-` 前缀并校验所有权后清理。
+测试只结束自己的假进程，不修改真实 TSF 注册或用户配置。两项测试共享假服务文件名，须串行执行；CTest 已设 `RUN_SERIAL`。
+真实计划任务恢复测试需已登录的 Windows 桌面，会等待下一次分钟触发，单项超时为 120 秒。
 
 ## assets
 

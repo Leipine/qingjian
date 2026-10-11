@@ -11,6 +11,8 @@ C:\Program Files\Qingjian\
     qingjian_tsf-<版本>-x86.dll   同上的 32 位版（企业微信 / WPS / 32 位 QQ 这类 32 位应用只能加载它）
     qingjian-server.exe       输入内核 Server（跑在应用进程外）
     qingjian-settings.exe     设置界面
+    qingjian-watchdog.exe     可选后台守护
+    watchdog-task.ps1         当前用户守护任务管理
     Microsoft.UI.Xaml.dll …   设置程序自带的 Windows App Runtime（自包含部署，见下节；约 56 MB / 185 个文件）
     qingjian.ico              开始菜单 / 启动项快捷方式的图标（exe 里也嵌了一份）
     data\generated\           dict.qj / lm.qj / glossary-{en,ja,zh,es,vi}.qj / english.tsv / dicts\*.qj
@@ -62,11 +64,11 @@ AppModel API 把框架包加进进程包图，Windows 10 上没有那两个函�
 ## 打包（在编译机上）
 
 ```powershell
-# 需要 MSVC 工具链 + Inno Setup。数据取自仓库 data\generated 与 assets，打包前先确保 .qj 是最新的。
+# 需要 MSVC C++ 工具链 + CMake 3.20+ + Inno Setup。数据取自仓库 data\generated 与 assets，打包前先确保 .qj 是最新的。
 powershell -ExecutionPolicy Bypass -File apps\windows\installer\build.ps1
 ```
 
-脚本 release 构建三个产物、从 `apps\windows\server\Cargo.toml` 读版本、找 `ISCC.exe`、编 `qingjian.iss`，
+脚本 release 构建 Server、两份 TSF DLL、设置程序与守护产物、从 `apps\windows\server\Cargo.toml` 读版本、找 `ISCC.exe`、编 `qingjian.iss`，
 成品在 `target\installer\qingjian-<版本>-windows-x86_64-setup.exe`。改了数据 / 脚本但二进制没变时加 `-SkipBuild`；`-Sign` 用自签证书签产物
 （uiAccess 要求 Server 签名 + 装 Program Files）。
 
@@ -79,3 +81,5 @@ powershell -ExecutionPolicy Bypass -File apps\windows\installer\build.ps1
 - **签名**：发版证书就绪后在这里加 `SignTool`（对应 mac 的 Developer ID）；开发期用 `-Sign` 的自签证书。
 - **没证书的包**（CI 内测版）：先设 `$env:QINGJIAN_UIACCESS = '0'` 再打，Server 不嵌 uiAccess——没签名的 exe 带 uiAccess=true 会起不来。
   代价是候选窗在 UWP 宿主里可能被盖住。`release.yml` 的 `windows` job 就是这么打的。
+
+后台守护默认关闭，由开始菜单「开启后台守护」显式启用；「暂停后台守护」保留现有输入服务。升级维护保存原状态，卸载清理本安装的守护任务。实现与构建见 [crate-notes](../../../docs/notes/crate-notes.md#windows-可选后台守护)，用户说明见 [后台守护](../../../docs/user/help/watchdog.md)。
